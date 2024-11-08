@@ -50,7 +50,7 @@ def get_city_name():
 
 # Function to fetch weather information from the API
 def weather_api(city_name):
-    api_key = "2d2c7a2e9545edda6c41c22e33ccdc5c"  # Add your API key here
+    api_key = "YOUR_API_KEY"  # Add your API key here
     base_url = "https://api.openweathermap.org/data/2.5/weather?"
 
     params = {
