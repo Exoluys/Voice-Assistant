@@ -111,7 +111,7 @@ def handle_send_email():
     speak("What should I say in the email?")
     message = listen()  # Listen for the email's message body
 
-    # Assuming `send_email` is defined elsewhere, you could call it here:
+    #Calling the send_email function
     response = send_email(recipient, subject, message)
     print(response)
     speak(response)
