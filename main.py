@@ -1,26 +1,30 @@
 import os
-import speech_recognition as sr  # Library for converting speech to text
-import datetime  # Library to get the current time
-import pyttsx3  # Library for text-to-speech functionality
-import requests  # Library to interact with web APIs
+import speech_recognition as sr
+import datetime
+import pyttsx3
+import requests
 from send_email import send_email
 from dotenv import load_dotenv
+import spacy
+from transformers import pipeline
 
+# Load environment variables
 load_dotenv()
 
+# Load spaCy's pre-trained English model
+nlp = spacy.load("en_core_web_sm")
+
+# Initialize the pre-trained transformer model for zero-shot classification
+classifier = pipeline("zero-shot-classification")
 
 class VoiceAssistant:
-    """A simple voice assistant that can tell the time, fetch weather info, and handle basic commands."""
+    """A simple voice assistant with NLP features for better command recognition."""
 
     def __init__(self, name="Jarvis"):
-        """
-        Initialize the voice assistant with a name, recognizer for speech recognition,
-        text-to-speech engine, and API key for weather data.
-        """
-        self.name = name  # Name of the assistant
-        self.recognizer = sr.Recognizer()  # Recognizer object for speech recognition
-        self.engine = pyttsx3.init()  # Initialize the text-to-speech engine
-        self.api_key = os.getenv("api_key") # Replace with your OpenWeatherMap API key
+        self.name = name
+        self.recognizer = sr.Recognizer()
+        self.engine = pyttsx3.init()
+        self.api_key = os.getenv("api_key")  # Replace with your OpenWeatherMap API key
 
     def speak(self, text):
         """Convert text to speech and speak it aloud."""
@@ -28,167 +32,132 @@ class VoiceAssistant:
         self.engine.runAndWait()
 
     def listen(self):
-        """
-        Listen for a voice command using the microphone and convert the captured audio to text.
-        Returns the recognized command as a string or an empty string if recognition fails.
-        """
-        with sr.Microphone() as source:  # Use the default system microphone as the input source
+        """Listen for a voice command and convert it to text."""
+        with sr.Microphone() as source:
             print("Listening...")
-            audio = self.recognizer.listen(source)  # Capture audio from the microphone
+            audio = self.recognizer.listen(source)
             try:
-                # Convert audio to text using Google Web Speech API
                 command = self.recognizer.recognize_google(audio).lower()
-                print("You said:", command)  # Print the recognized command
+                print("You said:", command)
                 return command
             except sr.UnknownValueError:
-                # Handle case when speech was unintelligible
                 print("Sorry, I didn't catch that.")
                 self.speak("Sorry, I didn't catch that.")
                 return ""
             except sr.RequestError:
-                # Handle network errors
                 print("Network error occurred.")
                 self.speak("There was an error with the network.")
                 return ""
 
-    def get_city_name(self):
+    def nlp_process(self, text):
         """
-        Prompt the user to say the name of the city for which they want weather information.
-        Returns the recognized city name as a string, or an empty string if recognition fails.
+        Process the command using spaCy and transformers for NLP tasks like entity recognition
+        and intent classification.
         """
-        self.speak("Please say the name of the city you want the weather info for.")
-        city_name = self.listen()  # Listen for the city name
-        if city_name:
-            print("City:", city_name)
-            return city_name
+        # Use spaCy for entity recognition
+        doc = nlp(text)
+        entities = [ent.text for ent in doc.ents]
+
+        # Use transformers for intent classification
+        labels = ["weather", "time", "send email", "greeting"]
+        result = classifier(text, candidate_labels=labels)
+        intent = result['labels'][0]  # Get the most likely intent
+
+        print(f"Entities: {entities}")
+        print(f"Intent: {intent}")
+        return intent, entities
+
+    def handle_command(self, command):
+        """Handle commands based on recognized intent and entities."""
+        intent, entities = self.nlp_process(command)
+
+        if intent == "time":
+            self.tell_time()
+        elif intent == "weather" and entities:
+            city_name = self.get_city_from_command(command)
+            if city_name:
+                self.get_weather(city_name)
+        elif intent == "send email":
+            receiver_email = self.get_receiver_email()
+            subject = self.get_subject()
+            message = self.get_message()
+            send_email(receiver_email, subject, message)
+        elif intent == "Hello":
+            self.speak("Hello! How can I assist you?")
+        elif any(word in command for word in ["stop", "exit", "quit"]):
+            # If the user says 'exit', 'quit', or 'stop', the assistant will stop.
+            self.speak("Goodbye!")
+            print("Goodbye!")
+            return True  # Exit the loop and stop the assistant
         else:
-            self.speak("Couldn't capture the city name.")
-            return ""
+            self.speak("Sorry, I didn't understand that command.")
+
+    def get_city_from_command(self, command):
+        """Extract the city name from the command using NLP."""
+        doc = nlp(command)
+        cities = [ent.text for ent in doc.ents if ent.label_ == "GPE"]
+        return cities[0] if cities else None
 
     def get_weather(self, city_name):
-        """
-        Fetch current weather data for the specified city using the OpenWeatherMap API.
-        Announce the weather information or error messages if data retrieval fails.
-        """
-        # Base URL for OpenWeatherMap API
+        """Fetch weather data from the OpenWeatherMap API."""
         base_url = "https://api.openweathermap.org/data/2.5/weather?"
-        # Parameters for API request
         params = {
-            "q": city_name,  # City name
-            "appid": self.api_key,  # API key for authentication
-            "units": "metric"  # Use Celsius for temperature
+            "q": city_name,
+            "appid": self.api_key,
+            "units": "metric"
         }
-
         try:
-            # Send GET request to the API
             response = requests.get(base_url, params=params)
-            if response.status_code == 200:  # Check if the request was successful
-                # Parse JSON response and extract weather data
+            if response.status_code == 200:
                 data = response.json()
                 temperature = data["main"]["temp"]
                 feels_like = data["main"]["feels_like"]
                 humidity = data["main"]["humidity"]
                 weather_description = data['weather'][0]['description']
                 wind_speed = data['wind']['speed']
-
-                # Format and announce the weather information
                 weather_info = (
                     f"The weather in {city_name} is currently {weather_description}. "
                     f"The temperature is {temperature}°C, feels like {feels_like}°C. "
                     f"Humidity is {humidity}%, and the wind speed is {wind_speed} meters per second."
                 )
-
-                print(weather_info)  # Display the weather information
-                self.speak(weather_info)  # Announce the weather information
+                print(weather_info)
+                self.speak(weather_info)
             else:
-                # Handle case when the city is not found
                 self.speak("City not found.")
         except requests.exceptions.RequestException as e:
-            # Handle request errors and notify the user
             print(f"Error fetching weather data: {e}")
             self.speak("There was an error fetching the weather data.")
 
     def tell_time(self):
         """Announce the current time."""
-        current_time = datetime.datetime.now().strftime("%I:%M %p")  # Get the current time in 12-hour format
-        print(f"The time is {current_time}")  # Print the time
-        self.speak(f"The time is {current_time}")  # Announce the time
+        current_time = datetime.datetime.now().strftime("%I:%M %p")
+        print(f"The time is {current_time}")
+        self.speak(f"The time is {current_time}")
 
-    def get_email_details(self):
-        """
-        Collect the receiver email, subject, and message from the user.
-        Returns a tuple (receiver_email, subject, message).
-        """
-        self.speak("Please say the receiver's email.")
-        receiver_email = self.listen()
-        if not receiver_email:
-            self.speak("Could not capture the receiver's email.")
-            return None, None, None
+    def get_receiver_email(self):
+        """Prompt the user to say the receiver's email."""
+        self.speak("Please say the email of the receiver you want the email to be sent.")
+        return self.listen()
 
-        self.speak("Please say the subject of the email.")
-        subject = self.listen()
-        if not subject:
-            self.speak("Could not capture the subject.")
-            return None, None, None
+    def get_subject(self):
+        """Prompt the user to say the email subject."""
+        self.speak("Tell the subject.")
+        return self.listen()
 
-        self.speak("Please say the message for the email.")
-        message = self.listen()
-        if not message:
-            self.speak("Could not capture the message.")
-            return None, None, None
-
-        return receiver_email, subject, message
-
-    def handle_command(self, command):
-        """
-        Handle various commands based on recognized voice input.
-        Responds to time, weather, and exit commands.
-        """
-        if "time" in command:
-            self.tell_time()  # Announce the current time
-
-        elif "weather" in command:
-            # Fetch and announce the weather for a specified city
-            city_name = self.get_city_name()
-            if city_name:
-                self.get_weather(city_name)
-
-        elif "mail" in command:
-            receiver_email, subject, message = self.get_email_details()
-            try:
-                send_email(receiver_email, subject, message)
-                self.speak("Email sent successfully.")
-            except Exception as e:
-                print(f"Error sending email: {e}")
-                self.speak("Sorry, there was an error sending the email.")
-
-
-        elif any(word in command for word in ["stop", "exit", "quit", "goodbye"]):
-            # Ask for confirmation before exiting
-            self.speak("Are you sure you want to exit? Please say yes or no.")
-            confirmation = self.listen().lower()
-            if "yes" in confirmation:
-                self.speak("Goodbye!")
-                return True  # Exit the loop if the user confirms to quit
-
-            else:
-                self.speak("Okay, I am still here.")  # Continue listening
-
-        else:
-            # Handle unrecognized commands
-            self.speak("Sorry, I didn't understand that command.")
-        return False  # Return False to continue the loop
+    def get_message(self):
+        """Prompt the user to say the message content for the email."""
+        self.speak("Tell me the message.")
+        return self.listen()
 
     def start(self):
-        """Start the assistant and continuously listen for commands."""
-        print(f"Hello, it's {self.name}!")  # Greet the user
+        """Start the assistant and listen for commands."""
+        print(f"Hello, it's {self.name}!")
         self.speak(f"Hello, it's {self.name}!")
 
         while True:
             command = self.listen()  # Listen for a command
-            if command and self.handle_command(command):  # Process the command
-                break  # Exit the loop if the user wants to quit
-
+            if command:
+                self.handle_command(command)  # Process the command
 
 # Initialize and start the assistant
 assistant = VoiceAssistant()
