@@ -1,21 +1,7 @@
-import os
-import speech_recognition as sr
 import datetime
-import pyttsx3
-import requests
-from send_email import send_email
-from dotenv import load_dotenv
-import spacy
-from transformers import pipeline
+import time
+import threading
 
-# Load environment variables
-load_dotenv()
-
-# Load spaCy's pre-trained English model
-nlp = spacy.load("en_core_web_sm")
-
-# Initialize the pre-trained transformer model for zero-shot classification
-classifier = pipeline("zero-shot-classification")
 
 class VoiceAssistant:
     """A simple voice assistant with NLP features for better command recognition."""
@@ -25,6 +11,7 @@ class VoiceAssistant:
         self.recognizer = sr.Recognizer()
         self.engine = pyttsx3.init()
         self.api_key = os.getenv("api_key")  # Replace with your OpenWeatherMap API key
+        self.reminders = []  # To store reminders
 
     def speak(self, text):
         """Convert text to speech and speak it aloud."""
@@ -54,12 +41,9 @@ class VoiceAssistant:
         Process the command using spaCy and transformers for NLP tasks like entity recognition
         and intent classification.
         """
-        # Use spaCy for entity recognition
         doc = nlp(text)
         entities = [ent.text for ent in doc.ents]
-
-        # Use transformers for intent classification
-        labels = ["weather", "time", "send email", "greeting"]
+        labels = ["weather", "time", "send email", "greeting", "reminder"]
         result = classifier(text, candidate_labels=labels)
         intent = result['labels'][0]  # Get the most likely intent
 
@@ -82,57 +66,60 @@ class VoiceAssistant:
             subject = self.get_subject()
             message = self.get_message()
             send_email(receiver_email, subject, message)
-        elif intent == "Hello":
+        elif intent == "reminder":
+            self.set_reminder(command)
+        elif intent == "greeting":
             self.speak("Hello! How can I assist you?")
         elif any(word in command for word in ["stop", "exit", "quit"]):
-            # If the user says 'exit', 'quit', or 'stop', the assistant will stop.
             self.speak("Goodbye!")
             print("Goodbye!")
             return True  # Exit the loop and stop the assistant
         else:
             self.speak("Sorry, I didn't understand that command.")
 
-    def get_city_from_command(self, command):
-        """Extract the city name from the command using NLP."""
-        doc = nlp(command)
-        cities = [ent.text for ent in doc.ents if ent.label_ == "GPE"]
-        return cities[0] if cities else None
+    def set_reminder(self, command):
+        """Set a reminder based on the command."""
+        self.speak("Please tell me the time for the reminder.")
+        reminder_time = self.listen()  # Get time from the user
 
-    def get_weather(self, city_name):
-        """Fetch weather data from the OpenWeatherMap API."""
-        base_url = "https://api.openweathermap.org/data/2.5/weather?"
-        params = {
-            "q": city_name,
-            "appid": self.api_key,
-            "units": "metric"
-        }
+        self.speak("What should the reminder say?")
+        reminder_message = self.listen()  # Get message for the reminder
+
         try:
-            response = requests.get(base_url, params=params)
-            if response.status_code == 200:
-                data = response.json()
-                temperature = data["main"]["temp"]
-                feels_like = data["main"]["feels_like"]
-                humidity = data["main"]["humidity"]
-                weather_description = data['weather'][0]['description']
-                wind_speed = data['wind']['speed']
-                weather_info = (
-                    f"The weather in {city_name} is currently {weather_description}. "
-                    f"The temperature is {temperature}°C, feels like {feels_like}°C. "
-                    f"Humidity is {humidity}%, and the wind speed is {wind_speed} meters per second."
-                )
-                print(weather_info)
-                self.speak(weather_info)
-            else:
-                self.speak("City not found.")
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching weather data: {e}")
-            self.speak("There was an error fetching the weather data.")
+            reminder_time = datetime.datetime.strptime(reminder_time, "%I:%M %p")  # Assuming time format like 3:00 PM
+            reminder_time = reminder_time.replace(year=datetime.datetime.now().year,
+                                                  month=datetime.datetime.now().month, day=datetime.datetime.now().day)
+
+            # Store reminder with the time and message
+            self.reminders.append((reminder_time, reminder_message))
+            self.speak(
+                f"Reminder set for {reminder_time.strftime('%I:%M %p')}. I'll remind you about: {reminder_message}")
+
+            # Start a background thread to check reminders
+            threading.Thread(target=self.check_reminders).start()
+
+        except ValueError:
+            self.speak("Sorry, I couldn't understand the time format. Please try again.")
+
+    def check_reminders(self):
+        """Check if any reminders are due."""
+        while True:
+            now = datetime.datetime.now()
+            for reminder_time, reminder_message in list(self.reminders):
+                if now >= reminder_time:
+                    self.speak(f"Reminder: {reminder_message}")
+                    self.reminders.remove((reminder_time, reminder_message))  # Remove reminder after it's triggered
+            time.sleep(30)  # Check every 30 seconds
 
     def tell_time(self):
         """Announce the current time."""
         current_time = datetime.datetime.now().strftime("%I:%M %p")
         print(f"The time is {current_time}")
         self.speak(f"The time is {current_time}")
+
+    def get_weather(self, city_name):
+        """Fetch weather data from the OpenWeatherMap API."""
+        # Weather code here
 
     def get_receiver_email(self):
         """Prompt the user to say the receiver's email."""
@@ -158,6 +145,7 @@ class VoiceAssistant:
             command = self.listen()  # Listen for a command
             if command:
                 self.handle_command(command)  # Process the command
+
 
 # Initialize and start the assistant
 assistant = VoiceAssistant()
