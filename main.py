@@ -1,7 +1,11 @@
+import os
 import speech_recognition as sr  # Library for converting speech to text
 import datetime  # Library to get the current time
 import pyttsx3  # Library for text-to-speech functionality
 import requests  # Library to interact with web APIs
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class VoiceAssistant:
@@ -15,7 +19,7 @@ class VoiceAssistant:
         self.name = name  # Name of the assistant
         self.recognizer = sr.Recognizer()  # Recognizer object for speech recognition
         self.engine = pyttsx3.init()  # Initialize the text-to-speech engine
-        self.api_key = "YOUR_API_KEY"  # Replace with your OpenWeatherMap API key
+        self.api_key = os.getenv("api_key") # Replace with your OpenWeatherMap API key
 
     def speak(self, text):
         """Convert text to speech and speak it aloud."""
