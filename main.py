@@ -1,227 +1,174 @@
 import os
 import speech_recognition as sr
 import pyttsx3
-import spacy  # Import spaCy
-from transformers import pipeline  # Import transformers pipeline
+import spacy
+from transformers import pipeline
 import datetime
 import time
 import threading
 import requests
 from dotenv import load_dotenv
 from send_email import send_email
-import re
 
+# Load environment variables
 load_dotenv()
 
-# Load spaCy model
-nlp = spacy.load("en_core_web_sm")  # Add this line to load the spaCy model
+# Load spaCy NLP model
+nlp = spacy.load("en_core_web_sm")
 
 
 class VoiceAssistant:
-    """A simple voice assistant with NLP features for better command recognition."""
+    """A simple voice assistant that performs tasks based on user commands."""
 
     def __init__(self, name="Jarvis"):
+        """Initialize assistant with necessary components."""
         self.name = name
         self.recognizer = sr.Recognizer()
         self.engine = pyttsx3.init()
-        self.api_key = os.getenv("api_key")  # Replace with your OpenWeatherMap API key
-        self.reminders = []  # To store reminders
-
-        # Initialize the zero-shot classification model
+        self.api_key = os.getenv("api_key")
+        self.reminders = []
         self.classifier = pipeline("zero-shot-classification")
 
     def speak(self, text):
-        """Convert text to speech and speak it aloud."""
+        """Convert text to speech."""
         self.engine.say(text)
         self.engine.runAndWait()
 
     def listen(self):
-        """Listen for a voice command and convert it to text."""
+        """Listen for a command and convert it to text."""
         with sr.Microphone() as source:
-            print("Listening...")
             audio = self.recognizer.listen(source)
             try:
-                command = self.recognizer.recognize_google(audio).lower()
-                print("You said:", command)
-                return command
-            except sr.UnknownValueError:
-                print("Sorry, I didn't catch that.")
+                return self.recognizer.recognize_google(audio).lower()
+            except (sr.UnknownValueError, sr.RequestError):
                 self.speak("Sorry, I didn't catch that.")
-                return ""
-            except sr.RequestError:
-                print("Network error occurred.")
-                self.speak("There was an error with the network.")
                 return ""
 
     def nlp_process(self, text):
-        """
-        Process the command using spaCy and transformers for NLP tasks like entity recognition
-        and intent classification.
-        """
-        doc = nlp(text)  # Using the loaded spaCy model
+        """Process the command using spaCy and zero-shot classification."""
+        doc = nlp(text)
         entities = [ent.text for ent in doc.ents]
         labels = ["weather", "time", "mail", "reminder"]
-
-        # Use zero-shot classification to determine the intent
         result = self.classifier(text, candidate_labels=labels)
-        intent = result['labels'][0]  # Get the most likely intent
-
-        # Debugging output
-        print(f"Entities: {entities}")
-        print(f"Intent: {intent}")
-        return intent, entities
+        return result['labels'][0], entities
 
     def handle_command(self, command):
-        """Handle commands based on recognized intent and entities."""
-        # Stop command detection first
+        """Process and execute the given command."""
         if "stop" in command or "exit" in command or "quit" in command:
             self.speak("Goodbye!")
-            print("Goodbye!")
-            return True  # Exit the loop and stop the assistant
+            return True
 
-        # Check if "reminder" or "set reminder" is mentioned and handle separately
         if "reminder" in command or "set reminder" in command:
-            self.set_reminder(command)
-            return False  # Don't need further processing after setting a reminder
+            self.set_reminder()
+            return False
 
-        # Process other intents
-        intent, entities = self.nlp_process(command)
+        intent, _ = self.nlp_process(command)
 
         if intent == "time":
             self.tell_time()
-        elif "weather" in command:  # Improved weather detection
+        elif "weather" in command:
             self.get_weather(command)
         elif intent == "mail":
-            receiver_email = self.get_receiver_email()
-            if receiver_email:
-                subject = self.get_subject()
-                message = self.get_message()
-                send_email(receiver_email, subject, message)
+            self.send_mail()
         else:
             self.speak("Sorry, I didn't understand that command.")
 
-    def set_reminder(self, command):
-        """Set a reminder based on the command."""
+    def set_reminder(self):
+        """Set a reminder based on user input."""
         self.speak("Please tell me the time for the reminder.")
-        reminder_time = self.listen()  # Get time from the user
-
-        # If no valid time, exit the reminder process
+        reminder_time = self.listen()
         if not reminder_time:
-            self.speak("Sorry, I couldn't understand the time. Please try again.")
             return
 
-        # Normalize the time format to handle 'a.m.' and 'p.m.'
         reminder_time = reminder_time.lower().replace('a.m.', 'am').replace('p.m.', 'pm')
 
         self.speak("What should the reminder say?")
-        reminder_message = self.listen()  # Get message for the reminder
-
-        # If no valid message, exit the reminder process
+        reminder_message = self.listen()
         if not reminder_message:
-            self.speak("Sorry, I couldn't understand the reminder message. Please try again.")
             return
 
-        # Try to parse the time
         try:
-            # Use datetime's strptime with a flexible time format
             reminder_time = datetime.datetime.strptime(reminder_time, "%I:%M %p")
             reminder_time = reminder_time.replace(year=datetime.datetime.now().year,
                                                   month=datetime.datetime.now().month,
                                                   day=datetime.datetime.now().day)
-
-            # Store reminder with the time and message
             self.reminders.append((reminder_time, reminder_message))
-            self.speak(
-                f"Reminder set for {reminder_time.strftime('%I:%M %p')}. I'll remind you about: {reminder_message}.")
-
-            # Start a background thread to check reminders
+            self.speak(f"Reminder set for {reminder_time.strftime('%I:%M %p')}. I'll remind you about: {reminder_message}.")
             threading.Thread(target=self.check_reminders, daemon=True).start()
-
         except ValueError:
             self.speak("Sorry, I couldn't understand the time format. Please try again.")
 
     def check_reminders(self):
-        """Check if any reminders are due."""
+        """Check periodically if any reminders are due."""
         while True:
             now = datetime.datetime.now()
             for reminder_time, reminder_message in list(self.reminders):
                 if now >= reminder_time:
                     self.speak(f"Reminder: {reminder_message}")
-                    self.reminders.remove((reminder_time, reminder_message))  # Remove reminder after it's triggered
-            time.sleep(30)  # Check every 30 seconds
+                    self.reminders.remove((reminder_time, reminder_message))
+            time.sleep(30)
 
     def tell_time(self):
         """Announce the current time."""
         current_time = datetime.datetime.now().strftime("%I:%M %p")
-        print(f"The time is {current_time}")
         self.speak(f"The time is {current_time}")
 
     def get_weather(self, command):
-        """Fetch weather data from the OpenWeatherMap API."""
+        """Get the weather for a specified city."""
         city_name = self.get_city_from_command(command)
-        if not city_name:
-            self.speak("Sorry, I couldn't understand the city name.")
-            return
+        if city_name:
+            api_key = self.api_key
+            base_url = "https://api.openweathermap.org/data/2.5/weather?"
+            complete_url = f"{base_url}q={city_name}&appid={api_key}&units=metric"
+            response = requests.get(complete_url)
+            data = response.json()
 
-        api_key = self.api_key  # Replace with your actual API key
-        base_url = "http://api.openweathermap.org/data/2.5/weather?"
-        complete_url = f"{base_url}q={city_name}&appid={api_key}&units=metric"
-
-        response = requests.get(complete_url)
-        data = response.json()
-
-        if data["cod"] == "404":
-            self.speak("Sorry, I couldn't find that city.")
-            print("City not found.")
-        else:
-            main = data["main"]
-            weather = data["weather"][0]
-            temperature = main["temp"]
-            description = weather["description"]
-
-            self.speak(f"The current temperature in {city_name} is {temperature}°C with {description}.")
-            print(f"The current temperature in {city_name} is {temperature}°C with {description}.")
+            if data["cod"] != "404":
+                main = data["main"]
+                weather = data["weather"][0]
+                temperature = main["temp"]
+                description = weather["description"]
+                self.speak(f"The current temperature in {city_name} is {temperature}°C with {description}.")
+            else:
+                self.speak("Sorry, I couldn't find that city.")
 
     def get_city_from_command(self, command):
-        """Extract the city from the user's command."""
+        """Extract the city name from the user's command."""
         doc = nlp(command)
-        cities = [ent.text for ent in doc.ents if ent.label_ == "GPE"]  # Geopolitical entity
+        cities = [ent.text for ent in doc.ents if ent.label_ == "GPE"]
         return cities[0] if cities else None
 
+    def send_mail(self):
+        """Send an email based on user input."""
+        receiver_email = self.get_receiver_email()
+        if receiver_email:
+            subject = self.get_subject()
+            message = self.get_message()
+            send_email(receiver_email, subject, message)
+
     def get_receiver_email(self):
-        """Prompt the user to type the receiver's email."""
-        self.speak("Please type the email of the receiver you want the email to be sent.")
-
-        # Allow the user to input the email directly
-        email = input("Enter the recipient's email address: ")  # Get email input from the user
-
-        if email:
-            self.speak(f"Received email input")  # Inform user about the received input
-            return email  # Return the email directly without regex checking
-        else:
-            self.speak("Sorry, I couldn't recognize the email address. Please try again.")
-            return None
+        """Prompt for and return the recipient's email address."""
+        self.speak("Please type the email of the receiver.")
+        email = input("Enter the recipient's email address: ")
+        return email if email else None
 
     def get_subject(self):
-        """Prompt the user to say the email subject."""
+        """Prompt for and return the subject of the email."""
         self.speak("Tell the subject.")
         return self.listen()
 
     def get_message(self):
-        """Prompt the user to say the message content for the email."""
+        """Prompt for and return the message content for the email."""
         self.speak("Tell me the message.")
         return self.listen()
 
     def start(self):
         """Start the assistant and listen for commands."""
-        print(f"Hello, it's {self.name}!")
         self.speak(f"Hello, it's {self.name}!")
-
         while True:
-            command = self.listen()  # Listen for a command
-            if command:
-                if self.handle_command(command):  # Process the command
-                    break  # Stop the assistant when the stop command is given
+            command = self.listen()
+            if command and self.handle_command(command):
+                break
 
 
 # Initialize and start the assistant
