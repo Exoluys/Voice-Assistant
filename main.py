@@ -8,6 +8,8 @@ import time
 import threading
 import requests
 from dotenv import load_dotenv
+from send_email import send_email
+import re
 
 load_dotenv()
 
@@ -58,7 +60,7 @@ class VoiceAssistant:
         """
         doc = nlp(text)  # Using the loaded spaCy model
         entities = [ent.text for ent in doc.ents]
-        labels = ["weather", "time", "send email", "greeting", "reminder"]
+        labels = ["weather", "time", "mail", "reminder"]
 
         # Use zero-shot classification to determine the intent
         result = self.classifier(text, candidate_labels=labels)
@@ -89,13 +91,12 @@ class VoiceAssistant:
             self.tell_time()
         elif "weather" in command:  # Improved weather detection
             self.get_weather(command)
-        elif intent == "send email":
+        elif intent == "mail":
             receiver_email = self.get_receiver_email()
-            subject = self.get_subject()
-            message = self.get_message()
-            self.send_email(receiver_email, subject, message)
-        elif intent == "greeting":
-            self.speak("Hello! How can I assist you?")
+            if receiver_email:
+                subject = self.get_subject()
+                message = self.get_message()
+                send_email(receiver_email, subject, message)
         else:
             self.speak("Sorry, I didn't understand that command.")
 
@@ -188,9 +189,18 @@ class VoiceAssistant:
         return cities[0] if cities else None
 
     def get_receiver_email(self):
-        """Prompt the user to say the receiver's email."""
-        self.speak("Please say the email of the receiver you want the email to be sent.")
-        return self.listen()
+        """Prompt the user to type the receiver's email."""
+        self.speak("Please type the email of the receiver you want the email to be sent.")
+
+        # Allow the user to input the email directly
+        email = input("Enter the recipient's email address: ")  # Get email input from the user
+
+        if email:
+            self.speak(f"Received email input")  # Inform user about the received input
+            return email  # Return the email directly without regex checking
+        else:
+            self.speak("Sorry, I couldn't recognize the email address. Please try again.")
+            return None
 
     def get_subject(self):
         """Prompt the user to say the email subject."""
