@@ -10,10 +10,10 @@ import requests
 from dotenv import load_dotenv
 from send_email import send_email
 
-# Load environment variables
+# Load environment variables from .env file
 load_dotenv()
 
-# Load spaCy NLP model
+# Load spaCy NLP model for entity recognition (e.g., locations, times)
 nlp = spacy.load("en_core_web_sm")
 
 
@@ -21,21 +21,21 @@ class VoiceAssistant:
     """A simple voice assistant that performs tasks based on user commands."""
 
     def __init__(self, name="Jarvis"):
-        """Initialize assistant with necessary components."""
+        """Initialize assistant components, including speech, recognizer, and NLP."""
         self.name = name
         self.recognizer = sr.Recognizer()
-        self.engine = pyttsx3.init()
-        self.api_key = os.getenv("api_key")
-        self.reminders = []
-        self.classifier = pipeline("zero-shot-classification")
+        self.engine = pyttsx3.init()  # Speech engine for text-to-speech
+        self.api_key = os.getenv("api_key")  # Weather API key from environment variables
+        self.reminders = []  # List to store reminders
+        self.classifier = pipeline("zero-shot-classification")  # Zero-shot classifier for intent detection
 
     def speak(self, text):
-        """Convert text to speech."""
+        """Convert text to speech and speak it out loud."""
         self.engine.say(text)
         self.engine.runAndWait()
 
     def listen(self):
-        """Listen for a command and convert it to text."""
+        """Listen for a command and convert it to text using speech recognition."""
         with sr.Microphone() as source:
             audio = self.recognizer.listen(source)
             try:
@@ -45,36 +45,39 @@ class VoiceAssistant:
                 return ""
 
     def nlp_process(self, text):
-        """Process the command using spaCy and zero-shot classification."""
-        doc = nlp(text)
-        entities = [ent.text for ent in doc.ents]
-        labels = ["weather", "time", "mail", "reminder"]
-        result = self.classifier(text, candidate_labels=labels)
-        return result['labels'][0], entities
+        """Process the command using spaCy and zero-shot classification to detect intent."""
+        doc = nlp(text)  # Process text for entity recognition
+        entities = [ent.text for ent in doc.ents]  # Extract named entities (e.g., dates, places)
+        labels = ["weather", "time", "mail", "reminder"]  # Define possible intents
+        result = self.classifier(text, candidate_labels=labels)  # Classify the intent
+        return result['labels'][0], entities  # Return intent and entities
 
     def handle_command(self, command):
-        """Process and execute the given command."""
+        """Process and execute the given command based on its intent."""
+        # Check for exit commands to stop the assistant
         if "stop" in command or "exit" in command or "quit" in command:
             self.speak("Goodbye!")
             return True
 
+        # Handle reminder setting command
         if "reminder" in command or "set reminder" in command:
             self.set_reminder()
             return False
 
+        # Identify the intent and handle accordingly
         intent, _ = self.nlp_process(command)
 
         if intent == "time":
-            self.tell_time()
+            self.tell_time()  # Tell the current time
         elif "weather" in command:
-            self.get_weather(command)
+            self.get_weather(command)  # Get weather for a city
         elif intent == "mail":
-            self.send_mail()
+            self.send_mail()  # Send an email
         else:
             self.speak("Sorry, I didn't understand that command.")
 
     def set_reminder(self):
-        """Set a reminder based on user input."""
+        """Set a reminder with a specific time and message."""
         self.speak("Please tell me the time for the reminder.")
         reminder_time = self.listen()
         if not reminder_time:
@@ -88,25 +91,26 @@ class VoiceAssistant:
             return
 
         try:
+            # Convert the time to a datetime object
             reminder_time = datetime.datetime.strptime(reminder_time, "%I:%M %p")
             reminder_time = reminder_time.replace(year=datetime.datetime.now().year,
                                                   month=datetime.datetime.now().month,
                                                   day=datetime.datetime.now().day)
-            self.reminders.append((reminder_time, reminder_message))
+            self.reminders.append((reminder_time, reminder_message))  # Add to reminder list
             self.speak(f"Reminder set for {reminder_time.strftime('%I:%M %p')}. I'll remind you about: {reminder_message}.")
-            threading.Thread(target=self.check_reminders, daemon=True).start()
+            threading.Thread(target=self.check_reminders, daemon=True).start()  # Check reminders in background
         except ValueError:
             self.speak("Sorry, I couldn't understand the time format. Please try again.")
 
     def check_reminders(self):
-        """Check periodically if any reminders are due."""
+        """Check periodically if any reminders are due and announce them."""
         while True:
             now = datetime.datetime.now()
             for reminder_time, reminder_message in list(self.reminders):
-                if now >= reminder_time:
+                if now >= reminder_time:  # Check if reminder time has passed
                     self.speak(f"Reminder: {reminder_message}")
-                    self.reminders.remove((reminder_time, reminder_message))
-            time.sleep(30)
+                    self.reminders.remove((reminder_time, reminder_message))  # Remove reminder after it's triggered
+            time.sleep(30)  # Check every 30 seconds
 
     def tell_time(self):
         """Announce the current time."""
@@ -114,7 +118,7 @@ class VoiceAssistant:
         self.speak(f"The time is {current_time}")
 
     def get_weather(self, command):
-        """Get the weather for a specified city."""
+        """Get and announce the weather for a specified city."""
         city_name = self.get_city_from_command(command)
         if city_name:
             api_key = self.api_key
@@ -147,23 +151,23 @@ class VoiceAssistant:
             send_email(receiver_email, subject, message)
 
     def get_receiver_email(self):
-        """Prompt for and return the recipient's email address."""
+        """Prompt the user for the recipient's email address."""
         self.speak("Please type the email of the receiver.")
         email = input("Enter the recipient's email address: ")
         return email if email else None
 
     def get_subject(self):
-        """Prompt for and return the subject of the email."""
+        """Prompt the user for the email's subject."""
         self.speak("Tell the subject.")
         return self.listen()
 
     def get_message(self):
-        """Prompt for and return the message content for the email."""
+        """Prompt the user for the email's message content."""
         self.speak("Tell me the message.")
         return self.listen()
 
     def start(self):
-        """Start the assistant and listen for commands."""
+        """Start the assistant and listen for commands continuously."""
         self.speak(f"Hello, it's {self.name}!")
         while True:
             command = self.listen()
