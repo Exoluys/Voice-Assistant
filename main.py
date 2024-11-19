@@ -3,6 +3,7 @@ import speech_recognition as sr  # Library for converting speech to text
 import datetime  # Library to get the current time
 import pyttsx3  # Library for text-to-speech functionality
 import requests  # Library to interact with web APIs
+from send_email import send_email
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -113,6 +114,31 @@ class VoiceAssistant:
         print(f"The time is {current_time}")  # Print the time
         self.speak(f"The time is {current_time}")  # Announce the time
 
+    def get_email_details(self):
+        """
+        Collect the receiver email, subject, and message from the user.
+        Returns a tuple (receiver_email, subject, message).
+        """
+        self.speak("Please say the receiver's email.")
+        receiver_email = self.listen()
+        if not receiver_email:
+            self.speak("Could not capture the receiver's email.")
+            return None, None, None
+
+        self.speak("Please say the subject of the email.")
+        subject = self.listen()
+        if not subject:
+            self.speak("Could not capture the subject.")
+            return None, None, None
+
+        self.speak("Please say the message for the email.")
+        message = self.listen()
+        if not message:
+            self.speak("Could not capture the message.")
+            return None, None, None
+
+        return receiver_email, subject, message
+
     def handle_command(self, command):
         """
         Handle various commands based on recognized voice input.
@@ -120,15 +146,34 @@ class VoiceAssistant:
         """
         if "time" in command:
             self.tell_time()  # Announce the current time
+
         elif "weather" in command:
             # Fetch and announce the weather for a specified city
             city_name = self.get_city_name()
             if city_name:
                 self.get_weather(city_name)
-        elif any(word in command for word in ["stop", "exit", "quit"]):
-            # Handle commands to exit the program
-            self.speak("Goodbye!")
-            return True  # Return True to signal exiting the loop
+
+        elif "mail" in command:
+            receiver_email, subject, message = self.get_email_details()
+            try:
+                send_email(receiver_email, subject, message)
+                self.speak("Email sent successfully.")
+            except Exception as e:
+                print(f"Error sending email: {e}")
+                self.speak("Sorry, there was an error sending the email.")
+
+
+        elif any(word in command for word in ["stop", "exit", "quit", "goodbye"]):
+            # Ask for confirmation before exiting
+            self.speak("Are you sure you want to exit? Please say yes or no.")
+            confirmation = self.listen().lower()
+            if "yes" in confirmation:
+                self.speak("Goodbye!")
+                return True  # Exit the loop if the user confirms to quit
+
+            else:
+                self.speak("Okay, I am still here.")  # Continue listening
+
         else:
             # Handle unrecognized commands
             self.speak("Sorry, I didn't understand that command.")
