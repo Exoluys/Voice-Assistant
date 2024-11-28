@@ -43,7 +43,7 @@ def send_email(recipient_email, subject, body):
         print(f"An error occurred: {e}")
 
 if __name__ == "__main__":
-    recipient = "jairevankar98@gmail.com"
+    recipient = os.getenv('SENDER_EMAIL')
     subject = "Test Email"
     body = "This is a test email."
 
